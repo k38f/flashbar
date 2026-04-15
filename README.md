@@ -81,6 +81,8 @@ sp.stop("Done!")
 
 ## Themes
 
+See the demo GIF above to see each theme in action with real colors.
+
 ```python
 from flashbar import Bar
 
@@ -90,16 +92,16 @@ for name in ["default", "green", "red", "retro", "minimal", "slim", "dots", "arr
         bar.update()
 ```
 
-| Theme     | Look                |
-|-----------|---------------------|
-| `default` | `█████░░░░░` blue   |
-| `green`   | `█████░░░░░` green  |
-| `red`     | `█████░░░░░` red    |
-| `retro`   | `#####.....` yellow |
-| `minimal` | `─────     ` white  |
-| `slim`    | `━━━━━╺╺╺╺╺` cyan   |
-| `dots`    | `●●●●●○○○○○` magenta|
-| `arrow`   | `▸▸▸▸▸▹▹▹▹▹` blue   |
+| Theme     | Look                       |
+|-----------|----------------------------|
+| `default` | `█████░░░░░` 🔵 blue       |
+| `green`   | `█████░░░░░` 🟢 green      |
+| `red`     | `█████░░░░░` 🔴 red        |
+| `retro`   | `#####.....` 🟡 yellow     |
+| `minimal` | `─────     ` ⚪ white      |
+| `slim`    | `━━━━━╺╺╺╺╺` 🔵 cyan      |
+| `dots`    | `●●●●●○○○○○` 🟣 magenta   |
+| `arrow`   | `▸▸▸▸▸▹▹▹▹▹` 🔵 blue      |
 
 ## Spinner styles
 
