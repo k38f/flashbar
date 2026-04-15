@@ -4,6 +4,10 @@ Lightweight, pretty progress bars for Python CLI apps.
 
 Zero dependencies. Python 3.8+. Just install and go.
 
+<p align="center">
+  <img src="demo.gif" alt="flashbar demo" width="600">
+</p>
+
 ## Install
 
 ```bash
