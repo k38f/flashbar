@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flashbar"
+version = "1.0.0"
+description = "Lightweight, pretty progress bars for Python CLI apps. No dependencies."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.8"
+authors = [
+    { name = "k38f", email = "268321423+k38f@users.noreply.github.com" },
+]
+keywords = ["progress", "bar", "cli", "terminal", "spinner", "loading"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/k38f/flashbar"
+Repository = "https://github.com/k38f/flashbar"
+Issues = "https://github.com/k38f/flashbar/issues"
+
+[tool.setuptools.packages.find]
+include = ["flashbar*"]
