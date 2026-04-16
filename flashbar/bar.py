@@ -1,8 +1,9 @@
 import sys
+import re
 import time
 import shutil
 
-# ── themes & colors ──────────────────────────────────────────────
+# -- themes & colors --------------------------------------
 
 THEMES = {
     "default": {"fill": "█", "empty": "░", "color": "\033[94m"},
@@ -28,6 +29,9 @@ NAMED_COLORS = {
 RESET = "\033[0m"
 DIM   = "\033[2m"
 
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+_DEFAULT_WIDTH = 40
+
 
 def resolve_color(color):
     """Turn a color name ('cyan') or hex ('#FF5733') into an ANSI escape."""
@@ -41,7 +45,6 @@ def resolve_color(color):
         except ValueError:
             pass
 
-    # fallback — no crash, just default blue
     return NAMED_COLORS["blue"]
 
 
@@ -57,6 +60,12 @@ def _format_time(seconds):
     s = seconds % 60
     return f"{h}:{m:02d}:{s:02d}"
 
+
+def _visible_len(text):
+    return len(_ANSI_RE.sub("", text))
+
+
+# ---------------------------------------------------------
 
 class Bar:
     """Terminal progress bar with ETA, speed, and themes.
@@ -106,11 +115,12 @@ class Bar:
         self._start_time = None
         self._finished = False
 
-        # resolve theme + overrides
         base = THEMES.get(theme, THEMES["default"])
         self.color = resolve_color(color) if color else base["color"]
         self.fill  = fill  or base["fill"]
         self.empty = empty or base["empty"]
+
+    # -- public api ----------------------------------------
 
     def update(self, step=1):
         """Advance by `step` and redraw."""
@@ -131,18 +141,19 @@ class Bar:
         if self._start_time is None:
             self._start_time = time.monotonic()
 
-        self.current = max(0, min(value, self.total))
+        self.current = max(0, min(int(value), self.total))
         self._draw()
 
         if self.current >= self.total:
             self._finished = True
+
+    # -- rendering ----------------------------
 
     def _draw(self):
         pct = self.current / self.total
         filled = int(self.width * pct)
         bar_str = self.fill * filled + self.empty * (self.width - filled)
 
-        # build the line piece by piece
         parts = []
         if self.label:
             parts.append(self.label)
@@ -156,7 +167,7 @@ class Bar:
             speed = self.current / elapsed if elapsed > 0 else 0
             parts.append(f"{DIM}{speed:.1f} it/s{RESET}")
 
-        if self.show_eta and self.current > 0 and self.current < self.total:
+        if self.show_eta and 0 < self.current < self.total:
             eta = (elapsed / self.current) * (self.total - self.current)
             parts.append(f"{DIM}ETA {_format_time(eta)}{RESET}")
         elif self.show_eta and self.current >= self.total:
@@ -164,15 +175,23 @@ class Bar:
 
         line = " ".join(parts)
 
-        # truncate if wider than terminal (avoid ugly wrapping)
+        # TODO: maybe cache term width instead of querying every frame
         try:
             term_w = shutil.get_terminal_size().columns
-            # strip ANSI for length check — rough but good enough
-            visible = line
-            import re
-            visible = re.sub(r"\033\[[0-9;]*m", "", visible)
-            if len(visible) > term_w:
-                line = line[:term_w]
+            if _visible_len(line) > term_w:
+                out = []
+                vis = 0
+                i = 0
+                while i < len(line) and vis < term_w:
+                    m = _ANSI_RE.match(line, i)
+                    if m:
+                        out.append(m.group())
+                        i = m.end()
+                    else:
+                        out.append(line[i])
+                        vis += 1
+                        i += 1
+                line = "".join(out) + RESET
         except Exception:
             pass
 
@@ -182,7 +201,6 @@ class Bar:
         if self.current >= self.total:
             self.file.write("\n")
 
-    # context manager — auto-finish on exit
     def __enter__(self):
         return self
 
@@ -194,17 +212,15 @@ class Bar:
         return False
 
 
+# -- track() -----------------------------------------------
+
 def track(iterable, label="Progress", total=None, **kwargs):
     """Wrap any iterable with a progress bar.
-
-    Handles generators/iterators that don't have __len__ —
-    just pass `total` explicitly.
 
     Usage:
         for item in track(range(100), label="Working"):
             process(item)
 
-        # generators — pass total manually
         for item in track(my_gen(), total=500):
             process(item)
     """

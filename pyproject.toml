@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flashbar"
-version = "1.0.0"
+version = "1.0.1"
 description = "Lightweight, pretty progress bars for Python CLI apps. No dependencies."
 readme = "README.md"
 license = { text = "MIT" }
