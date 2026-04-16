@@ -1,8 +1,8 @@
 # ⚡ flashbar
 
-Lightweight, pretty progress bars for Python CLI apps.
+A progress bar you can read end-to-end in one coffee break.
 
-Zero dependencies. Python 3.8+. Just install and go.
+One file. ~300 lines. No magic. No dependencies. Python 3.8+.
 
 <p align="center">
   <img src="demo.gif" alt="flashbar demo" width="600">
