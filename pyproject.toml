@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flashbar"
-version = "1.0.1"
+version = "1.2.0"
 description = "Lightweight, pretty progress bars for Python CLI apps. No dependencies."
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,6 +28,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
+    "Typing :: Typed",
 ]
 
 [project.urls]
@@ -37,3 +38,6 @@ Issues = "https://github.com/k38f/flashbar/issues"
 
 [tool.setuptools.packages.find]
 include = ["flashbar*"]
+
+[tool.setuptools.package-data]
+flashbar = ["py.typed"]
