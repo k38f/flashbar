@@ -35,9 +35,9 @@ for item in track(range(100), label="Downloading"):
 from flashbar import panel, rule, success, error, warn, info
 
 print(panel("Build complete\n42 files compiled in 1.2s",
-            title="Status", color="green"))
+            title="Status", color="green", width=47))
 
-print(rule("Status indicators"))
+print(rule("Status indicators", width=51))
 
 print(success("Tests passed"))
 print(error("Build failed"))
@@ -74,6 +74,15 @@ panel("body", style="ascii")    # + + + +
 ```
 
 自动适应内容宽度,或传入 `width=N` 固定大小。支持自定义 `color`(颜色名或 hex)和 `padding`。
+
+`panel()`、`rule()` 和状态函数可传入 `plain=True`,以移除 ANSI 并使用 ASCII 装饰。此模式也会移除用户文本中嵌套的 ANSI 序列:
+
+```python
+print(success("Tests passed", plain=True))  # [OK] Tests passed
+print(rule("Build log", width=32, plain=True))
+```
+
+默认 `plain=None` 时,仅在 stdout 是编码兼容的 TTY 时使用 Unicode 样式。传入 `plain=False` 可强制使用样式。
 
 ### Rule 分隔线
 
@@ -217,6 +226,8 @@ Bar(100, fill="=", empty="-")
 Bar(100, fill="●", empty="○", color="#FF69B4")
 ```
 
+自定义 `fill` 和 `empty` 必须各自正好占用一个终端单元格。
+
 ## 生成器与迭代器
 
 `track()` 可以包装任何拥有 `len()` 的对象。对于生成器,需要传入 `total=`:
@@ -258,7 +269,7 @@ python myscript.py 2>&1 | tee    # 没有乱码输出
 | `show_speed` | bool   | `False`     | 显示每秒处理数                      |
 | `smooth`     | bool   | `None`      | 亚字符渲染。None 为自动             |
 
-方法:`.update(step=1)`,`.set(value)`,context manager。
+方法:`.update(step=1)`,`.set(value)`,context manager。负步长会被拒绝。对已完成的进度条调用小于总量的 `.set()` 会重新打开进度条并重启计时器。
 
 #### `track(iterable, **options)`
 
@@ -271,7 +282,7 @@ python myscript.py 2>&1 | tee    # 没有乱码输出
 | `label` | str   | `""`     | spinner 旁边的文字  |
 | `style` | str   | `"dots"` | spinner 动画样式    |
 | `color` | str   | `"cyan"` | 颜色(名称或 hex)  |
-| `speed` | float | `0.08`   | 每帧间隔秒数        |
+| `speed` | float | `0.08`   | 每帧间隔的正有限秒数 |
 
 方法:`.start()`,`.stop(final_text=None)`,context manager。
 
@@ -287,23 +298,28 @@ python myscript.py 2>&1 | tee    # 没有乱码输出
 | `width`   | int  | `None`      | 总宽度。None 为自动适应                    |
 | `style`   | str  | `"rounded"` | rounded, square, double, heavy, ascii     |
 | `padding` | int  | `1`         | 盒内水平填充                               |
+| `plain`   | bool 或 None | `None` | 自动检测;True = ASCII,False = 样式 |
 
-#### `rule(label="", width=None, color=None) -> str`
+#### `rule(label="", width=None, color=None, plain=None) -> str`
 
-水平分隔线。空 `label` 表示纯分隔线。
+水平分隔线。空 `label` 表示纯分隔线,可见宽度始终与 `width` 一致。`plain=None` 时仅在 `sys.stdout` 为 TTY 时使用样式;`plain=False` 可强制启用样式。
 
 #### 状态指示器(返回 `str`)
+
+状态函数也使用 `plain=None` 自动检测。`plain=False` 强制彩色输出,`plain=True` 输出可移植的 ASCII 文本。
 
 ```python
 success("ok")  # ✓ ok
 error("no")    # ✗ no
 warn("hmm")    # ⚠ hmm
 info("fyi")    # ℹ fyi
+
+success("ok", plain=True)  # [OK] ok
 ```
 
 #### `print_panel(text, title=None, color=None, file=None, **kwargs)`
 
-便捷函数:构建并打印 panel。在非 TTY 环境中自动剥离样式。
+构建并打印 panel。非 TTY 默认使用紧凑输出。`plain=True` 保留完整 ASCII 面板,`plain=False` 强制输出带样式的面板。
 
 ## 许可证
 

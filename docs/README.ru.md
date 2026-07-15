@@ -35,9 +35,9 @@ for item in track(range(100), label="Downloading"):
 from flashbar import panel, rule, success, error, warn, info
 
 print(panel("Build complete\n42 files compiled in 1.2s",
-            title="Status", color="green"))
+            title="Status", color="green", width=47))
 
-print(rule("Status indicators"))
+print(rule("Status indicators", width=51))
 
 print(success("Tests passed"))
 print(error("Build failed"))
@@ -48,7 +48,7 @@ print(info("Update available"))
 Вывод:
 
 ```
-╭─ Status ───────────────────────────────────────╮
+╭─ Status ────────────────────────────────────╮
 │ Build complete                              │
 │ 42 files compiled in 1.2s                   │
 ╰─────────────────────────────────────────────╯
@@ -74,6 +74,15 @@ panel("body", style="ascii")    # + + + +
 ```
 
 Размер автоматически подгоняется под содержимое; также можно передать `width=N` для фиксированной ширины. Поддерживаются произвольный `color` (имя или hex) и `padding`.
+
+`plain=True` у `panel()`, `rule()` и статусных функций убирает ANSI-коды и использует ASCII-оформление. Вложенные ANSI-коды в тексте также удаляются:
+
+```python
+print(success("Tests passed", plain=True))  # [OK] Tests passed
+print(rule("Build log", width=32, plain=True))
+```
+
+При стандартном `plain=None` Unicode-оформление используется только для TTY с подходящей кодировкой. `plain=False` принудительно включает оформление.
 
 ### Разделитель
 
@@ -217,6 +226,8 @@ Bar(100, fill="=", empty="-")
 Bar(100, fill="●", empty="○", color="#FF69B4")
 ```
 
+Значения `fill` и `empty` должны занимать ровно одну ячейку терминала каждое.
+
 ## Генераторы и итераторы
 
 `track()` работает со всем, у чего есть `len()`. Для генераторов передайте `total=`:
@@ -258,7 +269,7 @@ python myscript.py 2>&1 | tee    # без искажённого вывода
 | `show_speed` | bool   | `False`        | Показывать элементы в секунду          |
 | `smooth`     | bool   | `None`         | Подсимвольная отрисовка; None = авто    |
 
-Методы: `.update(step=1)`, `.set(value)`, контекстный менеджер.
+Методы: `.update(step=1)`, `.set(value)`, контекстный менеджер. Отрицательный шаг запрещён. Вызов `.set()` со значением меньше максимума повторно открывает завершённый бар и перезапускает таймер.
 
 #### `track(iterable, **options)`
 
@@ -271,7 +282,7 @@ python myscript.py 2>&1 | tee    # без искажённого вывода
 | `label`  | str   | `""`           | Текст рядом со спиннером       |
 | `style`  | str   | `"dots"`       | Стиль анимации спиннера        |
 | `color`  | str   | `"cyan"`       | Цвет (имя или hex)           |
-| `speed`  | float | `0.08`         | Секунд между кадрами             |
+| `speed`  | float | `0.08`         | Положительное конечное число секунд между кадрами |
 
 Методы: `.start()`, `.stop(final_text=None)`, контекстный менеджер.
 
@@ -287,23 +298,28 @@ python myscript.py 2>&1 | tee    # без искажённого вывода
 | `width`  | int | `None`         | Общая ширина; None = автоподгонка под содержимое    |
 | `style`  | str | `"rounded"`    | rounded, square, double, heavy, ascii         |
 | `padding`| int | `1`            | Горизонтальные отступы внутри рамки                 |
+| `plain`  | bool или None | `None` | Автоопределение; True = ASCII, False = оформление |
 
-#### `rule(label="", width=None, color=None) -> str`
+#### `rule(label="", width=None, color=None, plain=None) -> str`
 
-Горизонтальный разделитель. Пустой `label` создаёт обычную линию.
+Горизонтальный разделитель. Пустой `label` создаёт обычную линию. Видимая ширина всегда равна `width`. При `plain=None` оформление включается только для TTY; `plain=False` включает его принудительно.
 
 #### Индикаторы состояния (возвращают `str`)
+
+Статусные функции также автоматически определяют TTY при `plain=None`. Для принудительного цвета используйте `plain=False`, для ASCII — `plain=True`.
 
 ```python
 success("ok")  # ✓ ok
 error("no")    # ✗ no
 warn("hmm")    # ⚠ hmm
 info("fyi")    # ℹ fyi
+
+success("ok", plain=True)  # [OK] ok
 ```
 
 #### `print_panel(text, title=None, color=None, file=None, **kwargs)`
 
-Создаёт и печатает панель. Если вывод не является TTY, ANSI-оформление отключается.
+Создаёт и печатает панель. Для не-TTY вывод по умолчанию компактный. `plain=True` сохраняет полную ASCII-панель, а `plain=False` принудительно включает оформленную панель.
 
 ## Лицензия
 

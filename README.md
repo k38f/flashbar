@@ -35,9 +35,9 @@ Build styled CLI output with a few small functions:
 from flashbar import panel, rule, success, error, warn, info
 
 print(panel("Build complete\n42 files compiled in 1.2s",
-            title="Status", color="green"))
+            title="Status", color="green", width=47))
 
-print(rule("Status indicators"))
+print(rule("Status indicators", width=51))
 
 print(success("Tests passed"))
 print(error("Build failed"))
@@ -74,6 +74,15 @@ panel("body", style="ascii")    # + + + +
 ```
 
 Auto-fits to content, or pass `width=N` for a fixed size. Custom `color` (named or hex) and `padding` are supported.
+
+Pass `plain=True` to `panel()`, `rule()`, or a status helper for ANSI-free ASCII decoration. Nested ANSI sequences in user text are stripped in this mode:
+
+```python
+print(success("Tests passed", plain=True))  # [OK] Tests passed
+print(rule("Build log", width=32, plain=True))
+```
+
+With the default `plain=None`, these helpers use styled Unicode only when stdout is an encodable TTY. Pass `plain=False` to force styling.
 
 ### Rule
 
@@ -217,6 +226,8 @@ Bar(100, fill="=", empty="-")
 Bar(100, fill="●", empty="○", color="#FF69B4")
 ```
 
+Custom `fill` and `empty` values must each occupy exactly one terminal cell.
+
 ## Generators and iterators
 
 `track()` works with anything that has `len()`. For generators, pass `total=`:
@@ -258,7 +269,7 @@ python myscript.py 2>&1 | tee    # no garbled output
 | `show_speed` | bool   | `False`     | Show items/sec                      |
 | `smooth`     | bool   | `None`      | Sub-character rendering. None = auto |
 
-Methods: `.update(step=1)`, `.set(value)`, context manager.
+Methods: `.update(step=1)`, `.set(value)`, context manager. Negative steps are rejected. Calling `.set()` below the total reopens a completed bar and restarts its timer.
 
 #### `track(iterable, **options)`
 
@@ -271,7 +282,7 @@ Same options as `Bar`, plus `total=` for iterables without `len()`.
 | `label` | str   | `""`     | Text next to spinner     |
 | `style` | str   | `"dots"` | Spinner animation style  |
 | `color` | str   | `"cyan"` | Color (name or hex)      |
-| `speed` | float | `0.08`   | Seconds between frames   |
+| `speed` | float | `0.08`   | Positive finite seconds between frames |
 
 Methods: `.start()`, `.stop(final_text=None)`, context manager.
 
@@ -287,23 +298,28 @@ Methods: `.start()`, `.stop(final_text=None)`, context manager.
 | `width`   | int  | `None`      | Total width. None = auto-fit content       |
 | `style`   | str  | `"rounded"` | rounded, square, double, heavy, ascii      |
 | `padding` | int  | `1`         | Horizontal padding inside the box          |
+| `plain`   | bool or None | `None` | Auto-detect output; True = ASCII, False = styled |
 
-#### `rule(label="", width=None, color=None) -> str`
+#### `rule(label="", width=None, color=None, plain=None) -> str`
 
-Horizontal divider. Empty `label` for plain line.
+Horizontal divider. Empty `label` creates an unlabelled line. Its visible width always matches `width`. With `plain=None`, output is styled only when `sys.stdout` is a TTY; pass `plain=False` to force styling.
 
 #### Status indicators (return `str`)
+
+Status helpers use the same `plain=None` auto-detection. Pass `plain=False` to force color or `plain=True` for portable ASCII text.
 
 ```python
 success("ok")  # ✓ ok
 error("no")    # ✗ no
 warn("hmm")    # ⚠ hmm
 info("fyi")    # ℹ fyi
+
+success("ok", plain=True)  # [OK] ok
 ```
 
 #### `print_panel(text, title=None, color=None, file=None, **kwargs)`
 
-Convenience: builds and prints a panel. Strips styling automatically when output isn't a TTY.
+Builds and prints a panel. Non-TTY output is compact by default. Pass `plain=True` to keep a full ASCII panel or `plain=False` to force the styled panel.
 
 ## License
 

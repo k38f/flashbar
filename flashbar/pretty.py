@@ -1,31 +1,142 @@
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 from typing import IO, Optional
 
-from .bar import RESET, _truncate_ansi, _visible_len, resolve_color
+from .bar import RESET, _close_ansi, _truncate_ansi, _visible_len, resolve_color
 
-# Box-drawing characters for panel borders.
-# Default uses rounded corners — easier on the eyes than square ones.
+
 _BORDERS = {
     "rounded": {"tl": "╭", "tr": "╮", "bl": "╰", "br": "╯", "h": "─", "v": "│"},
-    "square":  {"tl": "┌", "tr": "┐", "bl": "└", "br": "┘", "h": "─", "v": "│"},
-    "double":  {"tl": "╔", "tr": "╗", "bl": "╚", "br": "╝", "h": "═", "v": "║"},
-    "heavy":   {"tl": "┏", "tr": "┓", "bl": "┗", "br": "┛", "h": "━", "v": "┃"},
-    "ascii":   {"tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|"},
+    "square": {"tl": "┌", "tr": "┐", "bl": "└", "br": "┘", "h": "─", "v": "│"},
+    "double": {"tl": "╔", "tr": "╗", "bl": "╚", "br": "╝", "h": "═", "v": "║"},
+    "heavy": {"tl": "┏", "tr": "┓", "bl": "┗", "br": "┛", "h": "━", "v": "┃"},
+    "ascii": {"tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|"},
 }
+
+_ANSI_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x1b\x07]*(?:\x07|\x1b\\)|[@-_])"
+)
+_ASCII_FALLBACK = str.maketrans({
+    "╭": "+", "╮": "+", "╰": "+", "╯": "+",
+    "┌": "+", "┐": "+", "└": "+", "┘": "+",
+    "╔": "+", "╗": "+", "╚": "+", "╝": "+",
+    "┏": "+", "┓": "+", "┗": "+", "┛": "+",
+    "─": "-", "═": "-", "━": "-",
+    "│": "|", "║": "|", "┃": "|",
+    "✓": "+", "✗": "x", "⚠": "!", "ℹ": "i",
+})
 
 
 def _term_width(default: int = 80) -> int:
     try:
-        return shutil.get_terminal_size().columns
+        return max(shutil.get_terminal_size().columns, 1)
     except Exception:
         return default
 
 
 def _is_tty(file: IO[str]) -> bool:
-    return bool(getattr(file, "isatty", lambda: False)())
+    try:
+        return bool(getattr(file, "isatty", lambda: False)())
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text).replace("\x1b", "")
+
+
+def _normalise_lines(text: str) -> list[str]:
+    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def _expand_tabs(text: str, start_column: int = 0) -> str:
+    if "\t" not in text:
+        return text
+
+    result = []
+    parts = text.split("\t")
+    for index, part in enumerate(parts):
+        result.append(part)
+        if index == len(parts) - 1:
+            break
+        column = start_column + _visible_len("".join(result))
+        result.append(" " * (8 - column % 8))
+    return "".join(result)
+
+
+def _plain_for_stream(file: IO[str]) -> bool:
+    if not _is_tty(file):
+        return True
+
+    encoding = getattr(file, "encoding", None)
+    if isinstance(encoding, str):
+        try:
+            "─✓✗⚠ℹ".encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            return True
+    return False
+
+
+def _text_for_stream(text: str, file: IO[str]) -> str:
+    encoding = getattr(file, "encoding", None)
+    if not isinstance(encoding, str):
+        return text
+    try:
+        return text.encode(encoding).decode(encoding)
+    except UnicodeEncodeError:
+        return text.encode(encoding, errors="replace").decode(encoding)
+    except LookupError:
+        return text
+
+
+def _plain_output(plain: Optional[bool]) -> bool:
+    if plain is not None:
+        return plain
+    return _plain_for_stream(sys.stdout)
+
+
+def _truncate(text: str, width: int) -> str:
+    if _visible_len(text) <= width:
+        return text
+
+    result = _truncate_ansi(text, width)
+    # Older versions of the shared helper always added RESET, even to plain text.
+    if "\x1b" not in text and result.endswith(RESET):
+        result = result[:-len(RESET)]
+    return result
+
+
+def _close_inline_style(text: str) -> str:
+    return _close_ansi(text)
+
+
+def _write_compatible(file: IO[str], text: str) -> None:
+    encoding = getattr(file, "encoding", None)
+    if isinstance(encoding, str):
+        try:
+            text.encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            text = text.translate(_ASCII_FALLBACK)
+            try:
+                text = text.encode(encoding, errors="replace").decode(encoding)
+            except LookupError:
+                text = text.encode("ascii", errors="replace").decode("ascii")
+
+    try:
+        file.write(text)
+    except UnicodeEncodeError as exc:
+        fallback_encoding = getattr(exc, "encoding", None) or encoding or "ascii"
+        safe = text.translate(_ASCII_FALLBACK)
+        try:
+            safe = safe.encode(fallback_encoding, errors="replace").decode(
+                fallback_encoding
+            )
+        except (LookupError, UnicodeError):
+            safe = safe.encode("ascii", errors="replace").decode("ascii")
+        file.write(safe)
 
 
 # -- Panel ------------------------------------------------
@@ -37,120 +148,176 @@ def panel(
     width: Optional[int] = None,
     style: str = "rounded",
     padding: int = 1,
+    plain: Optional[bool] = None,
 ) -> str:
-    """Wrap text in a bordered panel. Returns a string ready to print.
+    """Wrap text in a bordered panel and return it as a string.
 
-    Args:
-        text:    Body content. May contain newlines.
-        title:   Optional title shown in the top border.
-        color:   Border color — name ('cyan') or hex ('#FF5733').
-        width:   Total width including borders. None = auto-fit content.
-        style:   Border style: rounded, square, double, heavy, ascii.
-        padding: Spaces of horizontal padding inside the box.
-
-    Usage:
-        print(panel("Hello", title="Greeting", color="cyan"))
+    ``plain=True`` strips inline terminal styling and uses an ASCII border,
+    which is useful for redirected output and legacy console encodings.
     """
-    chars = _BORDERS.get(style, _BORDERS["rounded"])
-    color_code = resolve_color(color) if color else ""
-    reset = RESET if color_code else ""
+    plain_output = _plain_output(plain)
+    if not isinstance(padding, int) or isinstance(padding, bool):
+        raise TypeError("padding must be an integer")
+    if padding < 0:
+        raise ValueError("padding must be >= 0")
+    if width is not None:
+        if not isinstance(width, int) or isinstance(width, bool):
+            raise TypeError("width must be an integer or None")
+        if width < padding * 2 + 2:
+            raise ValueError("width is too small for the requested padding")
+        if title and width < 3:
+            raise ValueError("width is too small for a panel title")
 
-    lines = text.split("\n")
+    chars = (
+        _BORDERS["ascii"]
+        if plain_output
+        else _BORDERS.get(style, _BORDERS["rounded"])
+    )
+    color_code = resolve_color(color) if color and not plain_output else ""
+    border_reset = RESET if color_code else ""
 
-    # Auto-size width to fit the longest content line + padding + borders
+    lines = _normalise_lines(str(text))
+    clean_title = None if title is None else str(title).replace("\r", " ").replace("\n", " ")
+    if plain_output:
+        lines = [_strip_ansi(line) for line in lines]
+        if clean_title is not None:
+            clean_title = _strip_ansi(clean_title)
+        if plain is None:
+            lines = [_text_for_stream(line, sys.stdout) for line in lines]
+            if clean_title is not None:
+                clean_title = _text_for_stream(clean_title, sys.stdout)
+    lines = [_expand_tabs(line, padding + 1) for line in lines]
+    if clean_title is not None:
+        clean_title = _expand_tabs(clean_title, 3)
+
+    minimum_width = padding * 2 + 2
     if width is None:
         content_w = max((_visible_len(line) for line in lines), default=0)
-        title_w = _visible_len(title) + 4 if title else 0
-        width = max(content_w + padding * 2 + 2, title_w + 4, 10)
-        # Don't exceed terminal width
-        width = min(width, _term_width())
+        title_w = _visible_len(clean_title) + 4 if clean_title else 0
+        wanted = max(content_w + padding * 2 + 2, title_w + 4, 10)
+        width = max(min(wanted, _term_width()), minimum_width)
 
-    inner_w = max(width - 2, 0)
+    inner_w = width - 2
+    available = inner_w - padding * 2
     pad_str = " " * padding
-
     out = []
 
-    # Top border with optional title
-    if title:
-        title_visible = f" {title} "
-        # Fit title; truncate if too long
-        if _visible_len(title_visible) > inner_w - 2:
-            title_visible = title_visible[: max(0, inner_w - 2)]
-        remain = inner_w - _visible_len(title_visible) - 1
-        top = f"{chars['tl']}{chars['h']}{title_visible}{chars['h'] * max(remain, 0)}{chars['tr']}"
+    if clean_title:
+        title_text = f" {clean_title} "
+        title_text = _truncate(title_text, max(inner_w - 2, 0))
+        title_w = _visible_len(title_text)
+        remain = inner_w - title_w - 1
+        title_text = _close_inline_style(title_text)
+        if color_code:
+            title_text += color_code
+        top = (
+            f"{chars['tl']}{chars['h']}{title_text}"
+            f"{chars['h'] * max(remain, 0)}{chars['tr']}"
+        )
     else:
         top = f"{chars['tl']}{chars['h'] * inner_w}{chars['tr']}"
-    out.append(f"{color_code}{top}{reset}")
+    out.append(f"{color_code}{top}{border_reset}")
 
-    # Body lines — pad each to inner width, preserving any inline ANSI
     for line in lines:
-        vlen = _visible_len(line)
-        avail = inner_w - padding * 2
-        if vlen > avail:
-            line = _truncate_ansi(line, avail)
-            vlen = _visible_len(line)
-        space_after = " " * max(avail - vlen, 0)
+        line = _truncate(line, available)
+        line_w = _visible_len(line)
+        line = _close_inline_style(line)
+        space_after = " " * max(available - line_w, 0)
         out.append(
-            f"{color_code}{chars['v']}{reset}{pad_str}{line}{space_after}{pad_str}"
-            f"{color_code}{chars['v']}{reset}"
+            f"{color_code}{chars['v']}{border_reset}{pad_str}{line}{space_after}{pad_str}"
+            f"{color_code}{chars['v']}{border_reset}"
         )
 
-    # Bottom border
     bottom = f"{chars['bl']}{chars['h'] * inner_w}{chars['br']}"
-    out.append(f"{color_code}{bottom}{reset}")
-
+    out.append(f"{color_code}{bottom}{border_reset}")
     return "\n".join(out)
 
 
 # -- Status indicators ------------------------------------
 
-# These return strings — the user calls print() themselves.
-# Keeps the API consistent with panel() and rule().
+def _status(
+    msg: str,
+    symbol: str,
+    fallback: str,
+    color: str,
+    plain: Optional[bool],
+) -> str:
+    text = str(msg)
+    if _plain_output(plain):
+        text = _strip_ansi(text)
+        if plain is None:
+            text = _text_for_stream(text, sys.stdout)
+        return f"[{fallback}] {text}"
 
-def success(msg: str) -> str:
-    """Green checkmark + message."""
-    return f"{resolve_color('green')}✓{RESET} {msg}"
+    text = _close_inline_style(text)
+    return f"{resolve_color(color)}{symbol}{RESET} {text}"
 
 
-def error(msg: str) -> str:
-    """Red X + message."""
-    return f"{resolve_color('red')}✗{RESET} {msg}"
+def success(msg: str, *, plain: Optional[bool] = None) -> str:
+    """Green checkmark and a message."""
+    return _status(msg, "✓", "OK", "green", plain)
 
 
-def warn(msg: str) -> str:
-    """Yellow warning sign + message."""
-    return f"{resolve_color('yellow')}⚠{RESET} {msg}"
+def error(msg: str, *, plain: Optional[bool] = None) -> str:
+    """Red X and a message."""
+    return _status(msg, "✗", "x", "red", plain)
 
 
-def info(msg: str) -> str:
-    """Cyan info sign + message."""
-    return f"{resolve_color('cyan')}ℹ{RESET} {msg}"
+def warn(msg: str, *, plain: Optional[bool] = None) -> str:
+    """Yellow warning sign and a message."""
+    return _status(msg, "⚠", "!", "yellow", plain)
+
+
+def info(msg: str, *, plain: Optional[bool] = None) -> str:
+    """Cyan information sign and a message."""
+    return _status(msg, "ℹ", "i", "cyan", plain)
 
 
 # -- Rule (horizontal divider) -----------------------------
 
-def rule(label: str = "", width: Optional[int] = None, color: Optional[str] = None) -> str:
-    """Horizontal divider line. Optional centered label.
-
-    Args:
-        label: Text centered on the rule. Empty for plain line.
-        width: Line width. None = full terminal width.
-        color: Color — name or hex. Default is dim.
-    """
+def rule(
+    label: str = "",
+    width: Optional[int] = None,
+    color: Optional[str] = None,
+    plain: Optional[bool] = None,
+) -> str:
+    """Return a horizontal divider, optionally with a centered label."""
     if width is None:
         width = _term_width()
+    elif not isinstance(width, int) or isinstance(width, bool):
+        raise TypeError("width must be an integer or None")
+    if width < 1:
+        raise ValueError("width must be >= 1")
 
-    color_code = resolve_color(color) if color else "\033[2m"  # dim by default
-    reset = RESET
+    label = str(label).replace("\r", " ").replace("\n", " ")
+    plain_output = _plain_output(plain)
+    line_char = "-" if plain_output else "─"
+    color_code = "" if plain_output else (resolve_color(color) if color else "\033[2m")
+    reset = RESET if color_code else ""
+    if plain_output:
+        label = _strip_ansi(label)
+        if plain is None:
+            label = _text_for_stream(label, sys.stdout)
+    label = _expand_tabs(label)
 
-    if label:
-        label_w = _visible_len(label) + 2  # spaces around label
-        if label_w >= width:
-            return f"{color_code}{label}{reset}"
-        side = (width - label_w) // 2
-        right = width - label_w - side
-        return f"{color_code}{'─' * side} {label} {'─' * right}{reset}"
-    return f"{color_code}{'─' * width}{reset}"
+    label_w = _visible_len(label)
+    if label and label_w + 2 <= width:
+        side = (width - label_w - 2) // 2
+        right = width - label_w - 2 - side
+        label = _close_inline_style(label)
+        if color_code:
+            label += color_code
+        result = f"{line_char * side} {label} {line_char * right}"
+    elif label:
+        result = _close_inline_style(_truncate(label, width))
+        missing = width - _visible_len(result)
+        if missing > 0:
+            if color_code:
+                result += color_code
+            result += line_char * missing
+    else:
+        result = line_char * width
+    return f"{color_code}{result}{reset}"
 
 
 # -- print helpers (optional convenience) ------------------
@@ -162,13 +329,23 @@ def print_panel(
     file: Optional[IO[str]] = None,
     **kwargs,
 ) -> None:
-    """Convenience: build a panel and print it."""
-    f = file or sys.stdout
-    if _is_tty(f):
-        f.write(panel(text, title=title, color=color, **kwargs) + "\n")
+    """Build and print a panel, using clean text for non-TTY streams."""
+    f = file if file is not None else sys.stdout
+    is_tty = _is_tty(f)
+    explicit_mode = kwargs.get("plain") is not None
+    if not explicit_mode:
+        kwargs["plain"] = _plain_for_stream(f)
+    rendered = panel(text, title=title, color=color, **kwargs)
+
+    if is_tty or explicit_mode:
+        output = rendered + "\n"
     else:
-        # Strip styling for non-TTY: just print body with title prefix
+        clean_text = "\n".join(_strip_ansi(line) for line in _normalise_lines(str(text)))
         if title:
-            f.write(f"[{title}] ")
-        f.write(text + "\n")
+            clean_title = _strip_ansi(str(title).replace("\r", " ").replace("\n", " "))
+            output = f"[{clean_title}] {clean_text}\n"
+        else:
+            output = clean_text + "\n"
+
+    _write_compatible(f, output)
     f.flush()

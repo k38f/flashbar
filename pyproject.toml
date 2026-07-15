@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["flit_core>=3.11,<4"]
+build-backend = "flit_core.buildapi"
 
 [project]
 name = "flashbar"
 version = "1.2.0"
 description = "Lightweight, pretty progress bars for Python CLI apps. No dependencies."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.8"
 authors = [
     { name = "k38f", email = "268321423+k38f@users.noreply.github.com" },
@@ -23,7 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.14",
     "Environment :: Console",
     "Operating System :: OS Independent",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -36,8 +37,18 @@ Homepage = "https://github.com/k38f/flashbar"
 Repository = "https://github.com/k38f/flashbar"
 Issues = "https://github.com/k38f/flashbar/issues"
 
-[tool.setuptools.packages.find]
-include = ["flashbar*"]
+[tool.flit.sdist]
+include = [
+    "CHANGELOG.md",
+    "demo.gif",
+    "docs/",
+    "examples.py",
+    "tests/",
+]
 
-[tool.setuptools.package-data]
-flashbar = ["py.typed"]
+[tool.mypy]
+python_version = "3.8"
+files = ["flashbar"]
+check_untyped_defs = true
+no_implicit_optional = true
+warn_unused_ignores = true
