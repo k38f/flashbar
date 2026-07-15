@@ -1,15 +1,14 @@
 # ⚡ flashbar
 
-🌐 [English](README.md) · **简体中文**
+🌐 [English](../README.md) · **简体中文** · [Русский](README.ru.md)
 
-<sub>*本文档部分内容由 AI 翻译和润色。*</sub>
+![README: generated with AI](https://img.shields.io/badge/README-generated%20with%20AI-6f42c1)
 
-进度条 —— 现在还有美观的 CLI 输出 —— 你能在一杯咖啡的时间里读完整个库。
-
-单包。轻量。无魔法。零依赖。Python 3.8+。
+适用于 Python 3.8+ 的轻量级进度条和格式化 CLI 输出库。
+没有运行时依赖。
 
 <p align="center">
-  <img src="demo.gif" alt="flashbar 演示" width="600">
+  <img src="../demo.gif" alt="flashbar 演示" width="600">
 </p>
 
 ## 安装
@@ -28,14 +27,7 @@ for item in track(range(100), label="Downloading"):
     time.sleep(0.02)
 ```
 
-就这么简单。一行 import,一行调用。
-
-## 1.2 版本新特性
-
-- **美观输出模块** —— `panel()`、`rule()`,以及 `success()`、`error()`、`warn()`、`info()` 状态指示器。无需 rich,即可将任意文本包装在样式化的盒子中。
-- 1.1 的所有改进:平滑进度条渲染、TTY 检测、限频重绘、类型注解、短任务的更好 ETA。
-
-## 美观输出
+## 格式化输出
 
 通过几个小函数构建样式化的 CLI 输出:
 
@@ -283,7 +275,7 @@ python myscript.py 2>&1 | tee    # 没有乱码输出
 
 方法:`.start()`,`.stop(final_text=None)`,context manager。
 
-### 美观输出
+### 格式化输出
 
 #### `panel(text, **options) -> str`
 

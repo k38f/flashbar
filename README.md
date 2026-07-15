@@ -1,12 +1,11 @@
 # ⚡ flashbar
 
-🌐 **English** · [简体中文](README.zh-CN.md)
+🌐 **English** · [简体中文](docs/README.zh-CN.md) · [Русский](docs/README.ru.md)
 
-<sub>*Parts of this README were translated and edited with AI.*</sub>
+![README: generated with AI](https://img.shields.io/badge/README-generated%20with%20AI-6f42c1)
 
-A progress bar — and now pretty CLI output — you can read end-to-end in one coffee break.
-
-One package. Tiny. No magic. No dependencies. Python 3.8+.
+Lightweight progress bars and formatted CLI output for Python 3.8+.
+No runtime dependencies.
 
 <p align="center">
   <img src="demo.gif" alt="flashbar demo" width="600">
@@ -28,14 +27,7 @@ for item in track(range(100), label="Downloading"):
     time.sleep(0.02)
 ```
 
-That's it. One import, one line.
-
-## What's new in 1.2
-
-- **Pretty output module** — `panel()`, `rule()`, plus `success()`, `error()`, `warn()`, `info()` indicators. Wrap any text in styled boxes without pulling in rich.
-- All 1.1 improvements: smooth bar rendering, TTY detection, throttled redraws, type hints, better short-task ETA.
-
-## Pretty output
+## Formatted output
 
 Build styled CLI output with a few small functions:
 
@@ -283,7 +275,7 @@ Same options as `Bar`, plus `total=` for iterables without `len()`.
 
 Methods: `.start()`, `.stop(final_text=None)`, context manager.
 
-### Pretty output
+### Formatted output
 
 #### `panel(text, **options) -> str`
 
