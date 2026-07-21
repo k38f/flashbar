@@ -5,7 +5,6 @@
 ![README: generated with AI](https://img.shields.io/badge/README-generated%20with%20AI-6f42c1)
 
 适用于 Python 3.8+ 的轻量级进度条和格式化 CLI 输出库。
-没有运行时依赖。
 
 <p align="center">
   <img src="../demo.gif" alt="flashbar 演示" width="600">
@@ -16,6 +15,30 @@
 ```bash
 pip install flashbar
 ```
+
+## 更新检查
+
+进度条或旋转指示器在交互式终端中成功结束后，flashbar 会检查 PyPI
+上的新版本。结果缓存 7 天，因此不会在每次运行时请求或提示：
+
+```text
+ℹ  flashbar 1.4.0 is available (you have 1.3.0).
+Run: pip install -U flashbar
+```
+
+网络或缓存错误会被静默忽略。重定向输出、`CI`、GitHub Actions 和常见
+JSON 输出参数下不会检查。如果宿主 CLI 接受 `--no-update-check`，flashbar
+会识别该参数。通用的关闭方式是设置 `FLASHBAR_NO_UPDATE_CHECK=1`。
+
+只使用格式化辅助函数的应用，可以在主命令完成后显式调用：
+
+```python
+from flashbar import maybe_notify
+
+maybe_notify()
+```
+
+其他机器可读输出模式应跳过此调用。
 
 ## 快速开始
 
@@ -142,6 +165,47 @@ bar = Bar(1000, label="Training", show_eta=True)
 bar = Bar(1000, label="Training", show_speed=True)
 ```
 
+### 单位和动态状态
+
+设置 `unit` 后会显示已完成量和总量。`unit_scale=True` 对字节使用二进制
+单位，对其他值使用十进制单位：
+
+```python
+bar = Bar(file_size, label="Downloading", unit="B",
+          unit_scale=True, show_speed=True)
+# Downloading [████░░] 42% 4.2 MiB / 10.0 MiB 1.3 MiB/s
+```
+
+任务运行时可以更新标签和附加字段：
+
+```python
+bar.set_label("Compiling main.py")
+bar.set_postfix(files=42, errors=0)
+bar.set_postfix()  # 清除
+```
+
+### 未知总量
+
+总量未知时使用 `total=None`。每次 `update()` 都会移动不定进度动画并增加
+计数。知道总量后，可以让同一个进度条切换到百分比和 ETA：
+
+```python
+bar = Bar(None, label="Scanning", unit="files")
+bar.update()
+bar.update()
+bar.set_total(1500)
+```
+
+### 临时进度条
+
+`transient=True` 会在完成后从终端移除进度条，重定向输出时也不会留下
+最终行：
+
+```python
+with Bar(100, transient=True) as bar:
+    run_task(bar)
+```
+
 ### 平滑渲染
 
 亚字符渲染让进度条看起来更流畅。当填充字符为 `█` 时自动启用,你也可以显式控制:
@@ -258,7 +322,7 @@ python myscript.py 2>&1 | tee    # 没有乱码输出
 
 | 参数         | 类型   | 默认值      | 说明                                |
 |--------------|--------|-------------|-------------------------------------|
-| `total`      | int    | 必填        | 总步数                              |
+| `total`      | int 或 None | 必填   | 总步数；None 表示未知               |
 | `width`      | int    | `40`        | 进度条字符宽度                      |
 | `theme`      | str    | `"default"` | 主题名称                            |
 | `label`      | str    | `""`        | 进度条前的文字                      |
@@ -268,8 +332,13 @@ python myscript.py 2>&1 | tee    # 没有乱码输出
 | `show_eta`   | bool   | `True`      | 显示预计剩余时间                    |
 | `show_speed` | bool   | `False`     | 显示每秒处理数                      |
 | `smooth`     | bool   | `None`      | 亚字符渲染。None 为自动             |
+| `unit`       | str    | `None`      | 计数和速度使用的单位                |
+| `unit_scale` | bool   | `False`     | 字节使用 KiB/MiB，其他单位使用 k/M  |
+| `transient`  | bool   | `False`     | 完成后移除输出                      |
 
-方法:`.update(step=1)`,`.set(value)`,context manager。负步长会被拒绝。对已完成的进度条调用小于总量的 `.set()` 会重新打开进度条并重启计时器。
+方法：`.update(step=1)`、`.set(value)`、`.set_total(total)`、
+`.set_label(label)`、`.set_postfix(**fields)` 和 context manager。负步长会被
+拒绝。减小 `.set()` 的值或增加总量会重新打开已完成的进度条并重启计时器。
 
 #### `track(iterable, **options)`
 

@@ -9,6 +9,7 @@ import unicodedata
 from typing import IO, Iterable, Literal, Optional, Tuple
 
 from .bar import RESET, _truncate_ansi, _visible_len, resolve_color
+from .update_check import _maybe_notify_once
 
 SPINNER_STYLES = {
     "dots":    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
@@ -121,6 +122,7 @@ class Spinner:
         self.frames = _copy_frames(raw_frames)
         self.color = resolve_color(color)
         self.speed = _valid_speed(speed)
+        self._uses_default_file = file is None
         self.file = sys.stderr if file is None else file
         self._is_tty = self._stream_is_tty()
 
@@ -132,6 +134,7 @@ class Spinner:
         self._stop_owner: Optional[int] = None
         self._generation = 0
         self._worker_error: Optional[BaseException] = None
+        self._in_context = False
 
     def start(self) -> None:
         """Start the spinner animation in a background thread."""
@@ -243,6 +246,8 @@ class Spinner:
             raise worker_error
         if output_error is not None:
             raise output_error
+        if self._uses_default_file and not self._in_context:
+            _maybe_notify_once(self.file)
 
     def _animate(
         self,
@@ -318,16 +323,24 @@ class Spinner:
 
     def __enter__(self) -> "Spinner":
         self.start()
+        self._in_context = True
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> Literal[False]:
         label = _single_line(str(self.label))
         if exc_type is None:
-            self.stop(f"✓ {label}")
+            try:
+                self.stop(f"✓ {label}")
+            finally:
+                self._in_context = False
+            if self._uses_default_file:
+                _maybe_notify_once(self.file)
         else:
             try:
                 self.stop(f"✗ {label} (failed)")
             except BaseException:
                 # Output failures should never replace the user's exception.
                 pass
+            finally:
+                self._in_context = False
         return False

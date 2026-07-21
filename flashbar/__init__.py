@@ -1,10 +1,11 @@
 """flashbar — lightweight, pretty progress bars for the terminal."""
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 from .bar import Bar, NAMED_COLORS, THEMES, resolve_color, track
 from .pretty import error, info, panel, print_panel, rule, success, warn
 from .spinner import SPINNER_STYLES, Spinner
+from .update_check import maybe_notify
 
 __all__ = [
     # progress
@@ -24,4 +25,5 @@ __all__ = [
     "NAMED_COLORS",
     "SPINNER_STYLES",
     "resolve_color",
+    "maybe_notify",
 ]

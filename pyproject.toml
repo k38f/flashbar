@@ -4,12 +4,15 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "flashbar"
-version = "1.3.0"
-description = "Lightweight, pretty progress bars for Python CLI apps. No dependencies."
+version = "1.4.0"
+description = "Lightweight, pretty progress bars and formatted output for Python CLI apps."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.8"
+dependencies = [
+    "packaging>=21.0",
+]
 authors = [
     { name = "k38f", email = "268321423+k38f@users.noreply.github.com" },
 ]

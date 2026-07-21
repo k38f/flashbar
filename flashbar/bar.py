@@ -6,7 +6,10 @@ import shutil
 import sys
 import time
 import unicodedata
-from typing import IO, Iterable, Iterator, Optional, TypeVar
+from collections.abc import Mapping
+from typing import IO, Iterable, Iterator, List, Optional, TypeVar, Union
+
+from .update_check import _maybe_notify_once
 
 # -- themes & colors --------------------------------------
 
@@ -48,6 +51,8 @@ _ANSI_RE = re.compile(
 _DEFAULT_WIDTH = 40
 _MIN_REDRAW_INTERVAL = 1.0 / 30.0  # cap redraws at ~30 fps
 _TAB_SIZE = 8
+_DECIMAL_PREFIXES = ("", "k", "M", "G", "T", "P", "E", "Z", "Y")
+_BINARY_PREFIXES = ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi")
 
 
 T = TypeVar("T")
@@ -276,13 +281,93 @@ def _stream_is_tty(file: IO[str]) -> bool:
         return False
 
 
+def _single_line(value: object) -> str:
+    return str(value).replace("\r", " ").replace("\n", " ")
+
+
+def _format_postfix(values: Mapping[str, object]) -> str:
+    parts: List[str] = list(
+        _close_ansi(f"{_single_line(key)}={_single_line(value)}")
+        for key, value in values.items()
+    )
+    return " ".join(parts)
+
+
+def _format_integer(value: int) -> str:
+    try:
+        return str(value)
+    except ValueError:
+        if value == 0:
+            return "0"
+        logarithm = math.log10(abs(value))
+        exponent = int(math.floor(logarithm))
+        mantissa = 10 ** (logarithm - exponent)
+        sign = "-" if value < 0 else ""
+        return f"{sign}{mantissa:.1f}e+{exponent}"
+
+
+def _format_measure(value: Union[int, float], unit: str, scale: bool) -> str:
+    if not scale:
+        if isinstance(value, int):
+            number = _format_integer(value)
+        else:
+            try:
+                number = f"{float(value):.1f}"
+            except (TypeError, ValueError, OverflowError):
+                number = str(value)
+        return f"{number} {unit}".rstrip()
+
+    base = 1024 if unit == "B" else 1000
+    prefixes = _BINARY_PREFIXES if base == 1024 else _DECIMAL_PREFIXES
+    try:
+        amount = float(value)
+    except (TypeError, ValueError, OverflowError):
+        if not isinstance(value, int) or value == 0:
+            return f"{type(value).__name__} {unit}".rstrip()
+        logarithm = math.log(abs(value), base)
+        prefix_index = min(int(logarithm), len(prefixes) - 1)
+        scaled_logarithm = (
+            math.log10(abs(value)) - prefix_index * math.log10(base)
+        )
+        exponent = int(math.floor(scaled_logarithm))
+        mantissa = 10 ** (scaled_logarithm - exponent)
+        sign = "-" if value < 0 else ""
+        number = f"{sign}{mantissa:.1f}e+{exponent}"
+        return f"{number} {prefixes[prefix_index]}{unit}".rstrip()
+
+    prefix_index = 0
+    while (
+        math.isfinite(amount)
+        and abs(amount) >= base
+        and prefix_index < len(prefixes) - 1
+    ):
+        amount /= base
+        prefix_index += 1
+
+    if (
+        math.isfinite(amount)
+        and abs(round(amount, 1)) >= base
+        and prefix_index < len(prefixes) - 1
+    ):
+        amount /= base
+        prefix_index += 1
+
+    if prefix_index == 0 and isinstance(value, int):
+        number = _format_integer(value)
+    elif math.isfinite(amount):
+        number = f"{amount:.1f}"
+    else:
+        number = str(amount)
+    return f"{number} {prefixes[prefix_index]}{unit}".rstrip()
+
+
 # ---------------------------------------------------------
 
 class Bar:
     """Terminal progress bar with ETA, speed, and themes.
 
     Args:
-        total:      Number of steps to complete.
+        total:      Number of steps to complete, or None when unknown.
         width:      Bar width in characters (default 40).
         theme:      Built-in theme name. See THEMES dict.
         label:      Text shown before the bar.
@@ -294,6 +379,9 @@ class Bar:
         smooth:     Use sub-character rendering for smoother bars.
                     None (default) = auto-enable for full-block fill ('█').
         file:       Output stream. Default sys.stderr.
+        unit:       Optional unit shown with progress, such as "B" or "files".
+        unit_scale: Scale large values (B uses KiB, MiB, and so on).
+        transient:  Remove the completed bar from an interactive terminal.
 
     Usage:
         bar = Bar(100, label="Downloading")
@@ -303,7 +391,7 @@ class Bar:
 
     def __init__(
         self,
-        total: int,
+        total: Optional[int],
         width: int = _DEFAULT_WIDTH,
         theme: str = "default",
         label: str = "",
@@ -314,22 +402,40 @@ class Bar:
         show_speed: bool = False,
         smooth: Optional[bool] = None,
         file: Optional[IO[str]] = None,
+        unit: Optional[str] = None,
+        unit_scale: bool = False,
+        transient: bool = False,
     ) -> None:
-        if isinstance(total, bool) or not isinstance(total, int):
+        if total is not None and (
+            isinstance(total, bool) or not isinstance(total, int)
+        ):
             raise TypeError("total must be an integer")
-        if total <= 0:
+        if total is not None and total <= 0:
             raise ValueError("total must be > 0")
         if isinstance(width, bool) or not isinstance(width, int):
             raise TypeError("width must be an integer")
         if width <= 0:
             raise ValueError("width must be > 0")
+        if unit is not None and not isinstance(unit, str):
+            raise TypeError("unit must be a string")
+        if not isinstance(unit_scale, bool):
+            raise TypeError("unit_scale must be a boolean")
+        if not isinstance(transient, bool):
+            raise TypeError("transient must be a boolean")
 
         self.total = total
         self.width = width
-        self.label = str(label).replace("\r", " ").replace("\n", " ")
+        self.label = _single_line(label)
+        self.postfix = ""
+        raw_unit = _single_line(unit) if unit is not None else "it"
+        self.unit = _ANSI_RE.sub("", raw_unit)
+        self.unit_scale = unit_scale
+        self._show_units = unit is not None or unit_scale
+        self.transient = transient
         self.current = 0
         self.show_eta = show_eta
         self.show_speed = show_speed
+        self._uses_default_file = file is None
         self.file = file if file is not None else sys.stderr
 
         # Disable colors/animation when output isn't a real terminal —
@@ -344,6 +450,7 @@ class Bar:
         self._finished = False
         self._last_draw = float("-inf")
         self._line_open = False
+        self._in_context = False
 
         base = THEMES.get(theme, THEMES["default"])
         self.color = resolve_color(color) if color else base["color"]
@@ -370,14 +477,28 @@ class Bar:
         if self._finished:
             return
 
-        self.current = min(self.current + step, self.total)
+        if self.total is None:
+            self.current += step
+        else:
+            self.current = min(self.current + step, self.total)
         self._maybe_draw()
 
-        if self.current >= self.total:
+        if self.total is not None and self.current >= self.total:
             self._finished = True
+            if self._uses_default_file and not self._in_context:
+                _maybe_notify_once(self.file)
 
     def set(self, value: int) -> None:
         """Jump to a specific value and redraw."""
+        if self.total is None:
+            new_value = max(0, int(value))
+            if self._finished:
+                self._start_time = time.monotonic()
+                self._finished = False
+            self.current = new_value
+            self._maybe_draw(force=True)
+            return
+
         new_value = max(0, min(int(value), self.total))
         if self._finished and new_value >= self.total:
             return
@@ -386,6 +507,38 @@ class Bar:
         self.current = new_value
         self._finished = self.current >= self.total
         self._maybe_draw(force=True)
+        if self._finished and self._uses_default_file and not self._in_context:
+            _maybe_notify_once(self.file)
+
+    def set_total(self, total: int) -> None:
+        """Set a known total and switch an indeterminate bar to percentages."""
+        if isinstance(total, bool) or not isinstance(total, int):
+            raise TypeError("total must be an integer")
+        if total <= 0:
+            raise ValueError("total must be > 0")
+        if self.total == total:
+            return
+
+        was_finished = self._finished
+        self.total = total
+        self.current = min(self.current, total)
+        self._finished = self.current >= total
+        if was_finished and not self._finished:
+            self._start_time = time.monotonic()
+        self._maybe_draw(force=True)
+
+        if self._finished and self._uses_default_file and not self._in_context:
+            _maybe_notify_once(self.file)
+
+    def set_label(self, label: object) -> None:
+        self.label = _single_line(label)
+        if not self._finished:
+            self._maybe_draw(force=True)
+
+    def set_postfix(self, **values: object) -> None:
+        self.postfix = _format_postfix(values)
+        if not self._finished:
+            self._maybe_draw(force=True)
 
     # -- rendering ----------------------------
 
@@ -397,6 +550,22 @@ class Bar:
 
     def _build_bar(self) -> str:
         """Build the [###...] portion. Uses sub-character rendering when smooth=True."""
+        if self.total is None:
+            if self._finished:
+                return self.fill * self.width
+            pulse_width = min(3, self.width)
+            travel = self.width - pulse_width
+            if travel == 0:
+                position = 0
+            else:
+                phase = self.current % (travel * 2)
+                position = phase if phase <= travel else travel * 2 - phase
+            return (
+                self.empty * position
+                + self.fill * pulse_width
+                + self.empty * (self.width - position - pulse_width)
+            )
+
         if self.smooth:
             # 8 sub-positions per cell — bar feels much smoother
             total_eighths = int((self.width * 8 * self.current) // self.total)
@@ -420,16 +589,22 @@ class Bar:
         now = time.monotonic()
         if (
             force
-            or self.current >= self.total
+            or self._finished
+            or (self.total is not None and self.current >= self.total)
             or (now - self._last_draw) >= _MIN_REDRAW_INTERVAL
         ):
             self._last_draw = now
             self._draw()
 
     def _draw(self) -> None:
+        complete = self._finished or (
+            self.total is not None and self.current >= self.total
+        )
         # Non-TTY mode: stay silent except for a single line at the end.
         # Avoids spamming escape codes into pipes, log files, CI output.
-        if not self._is_tty and self.current < self.total:
+        if not self._is_tty and not complete:
+            return
+        if not self._is_tty and self.transient:
             return
 
         bar_str = self._build_bar()
@@ -438,15 +613,34 @@ class Bar:
 
         parts = []
         if self.label:
-            parts.append(_close_ansi(self.label))
+            label = _close_ansi(self.label) if self._is_tty else _ANSI_RE.sub(
+                "", self.label
+            )
+            parts.append(label)
 
         if self._is_tty:
             parts.append(f"{self.color}[{bar_str}]{RESET}")
         else:
             parts.append(f"[{bar_str}]")
 
-        percent = int((self.current * 100) // self.total)
-        parts.append(f"{max(0, min(percent, 100)):3d}%")
+        if self.total is not None:
+            percent = int((self.current * 100) // self.total)
+            parts.append(f"{max(0, min(percent, 100)):3d}%")
+
+        if self.total is None:
+            parts.append(
+                _format_measure(self.current, self.unit, self.unit_scale)
+            )
+        elif self._show_units:
+            if self.unit_scale:
+                current = _format_measure(self.current, self.unit, True)
+                total = _format_measure(self.total, self.unit, True)
+                parts.append(f"{current} / {total}")
+            else:
+                current = _format_integer(self.current)
+                total = _format_integer(self.total)
+                count = f"{current} / {total}"
+                parts.append(f"{count} {self.unit}".rstrip())
 
         if self.show_speed and self.current > 0:
             if elapsed > 0:
@@ -456,10 +650,19 @@ class Bar:
                     speed = math.inf
             else:
                 speed = 0.0
-            speed_str = f"{speed:.1f} it/s"
+            if self._show_units or self.total is None:
+                speed_str = (
+                    f"{_format_measure(speed, self.unit, self.unit_scale)}/s"
+                )
+            else:
+                speed_str = f"{speed:.1f} it/s"
             parts.append(f"{DIM}{speed_str}{RESET}" if self._is_tty else speed_str)
 
-        if self.show_eta and 0 < self.current < self.total:
+        if (
+            self.total is not None
+            and self.show_eta
+            and 0 < self.current < self.total
+        ):
             try:
                 remaining_ratio = (self.total - self.current) / self.current
             except OverflowError:
@@ -467,9 +670,24 @@ class Bar:
             eta = elapsed * remaining_ratio if elapsed > 0 else 0.0
             eta_str = f"ETA {_format_time(eta)}"
             parts.append(f"{DIM}{eta_str}{RESET}" if self._is_tty else eta_str)
-        elif self.show_eta and self.current >= self.total:
+        elif (
+            self.total is not None
+            and self.show_eta
+            and self.current >= self.total
+        ):
             time_str = _format_time(elapsed)
             parts.append(f"{DIM}{time_str}{RESET}" if self._is_tty else time_str)
+        elif self.total is None and self.show_eta and complete:
+            time_str = _format_time(elapsed)
+            parts.append(f"{DIM}{time_str}{RESET}" if self._is_tty else time_str)
+
+        if self.postfix:
+            postfix = (
+                _close_ansi(self.postfix)
+                if self._is_tty
+                else _ANSI_RE.sub("", self.postfix)
+            )
+            parts.append(postfix)
 
         line = " ".join(parts)
 
@@ -477,8 +695,11 @@ class Bar:
             if _visible_len(line) > self._term_w:
                 line = _truncate_ansi(line, self._term_w)
             _write_text(self.file, f"\r{line}\033[K")
-            if self.current >= self.total:
-                _write_text(self.file, "\n")
+            if complete:
+                if self.transient:
+                    _write_text(self.file, "\r\033[2K")
+                else:
+                    _write_text(self.file, "\n")
                 self._line_open = False
             else:
                 self._line_open = True
@@ -491,27 +712,44 @@ class Bar:
     def _close_line(self) -> None:
         if not self._line_open:
             return
-        _write_text(self.file, "\n")
+        if self.transient and self._is_tty:
+            _write_text(self.file, "\r\033[2K")
+        else:
+            _write_text(self.file, "\n")
         self.file.flush()
         self._line_open = False
 
     def __enter__(self) -> "Bar":
         if self.current == 0 and not self._finished:
             self._start_time = time.monotonic()
+        self._in_context = True
         return self
 
     def __exit__(self, *exc: object) -> None:
+        clean_exit = not exc or exc[0] is None
+        self._in_context = False
         if self._finished:
+            if clean_exit and self._uses_default_file:
+                _maybe_notify_once(self.file)
             return
 
-        self.current = self.total
+        if self.total is None:
+            self._finished = True
+        else:
+            self.current = self.total
+        draw_succeeded = False
         try:
             self._draw()
+            draw_succeeded = True
         except BaseException:
             if not exc or exc[0] is None:
                 raise
         finally:
             self._finished = True
+
+        if draw_succeeded and clean_exit:
+            if self._uses_default_file:
+                _maybe_notify_once(self.file)
 
 
 # -- track() -----------------------------------------------
@@ -530,6 +768,9 @@ def track(
     show_speed: bool = False,
     smooth: Optional[bool] = None,
     file: Optional[IO[str]] = None,
+    unit: Optional[str] = None,
+    unit_scale: bool = False,
+    transient: bool = False,
 ) -> Iterator[T]:
     """Wrap any iterable with a progress bar.
 
@@ -561,6 +802,9 @@ def track(
         show_speed=show_speed,
         smooth=smooth,
         file=file,
+        unit=unit,
+        unit_scale=unit_scale,
+        transient=transient,
     )
     try:
         for item in iterable:

@@ -5,7 +5,6 @@
 ![README: generated with AI](https://img.shields.io/badge/README-generated%20with%20AI-6f42c1)
 
 Lightweight progress bars and formatted CLI output for Python 3.8+.
-No runtime dependencies.
 
 <p align="center">
   <img src="demo.gif" alt="flashbar demo" width="600">
@@ -16,6 +15,33 @@ No runtime dependencies.
 ```bash
 pip install flashbar
 ```
+
+## Update checks
+
+After a progress bar or spinner finishes successfully in an interactive
+terminal, flashbar checks PyPI for a newer release. The result is cached for
+7 days, so neither the request nor the notice runs on every command:
+
+```text
+ℹ  flashbar 1.4.0 is available (you have 1.3.0).
+Run: pip install -U flashbar
+```
+
+Network and cache errors are silently ignored. Checks are skipped for redirected
+output, `CI`, GitHub Actions, and common JSON output flags. If the hosting CLI
+accepts `--no-update-check`, flashbar recognizes that flag. The universal opt-out
+is `FLASHBAR_NO_UPDATE_CHECK=1`.
+
+Apps that only use the formatting helpers can run the same check explicitly
+after their real command has completed:
+
+```python
+from flashbar import maybe_notify
+
+maybe_notify()
+```
+
+Keep that call out of any other machine-readable output mode.
 
 ## Quick start
 
@@ -142,6 +168,48 @@ bar = Bar(1000, label="Training", show_eta=True)
 bar = Bar(1000, label="Training", show_speed=True)
 ```
 
+### Units and live status
+
+Pass a unit to show completed and total values. `unit_scale=True` uses binary
+units for bytes and decimal units for everything else:
+
+```python
+bar = Bar(file_size, label="Downloading", unit="B",
+          unit_scale=True, show_speed=True)
+# Downloading [████░░] 42% 4.2 MiB / 10.0 MiB 1.3 MiB/s
+```
+
+The label and postfix fields can change while a task is running:
+
+```python
+bar.set_label("Compiling main.py")
+bar.set_postfix(files=42, errors=0)
+bar.set_postfix()  # clear it
+```
+
+### Unknown totals
+
+Use `total=None` while the amount of work is unknown. Each `update()` advances
+the indeterminate pulse and counter. Once the total becomes known, switch the
+same bar to percentages and ETA:
+
+```python
+bar = Bar(None, label="Scanning", unit="files")
+bar.update()
+bar.update()
+bar.set_total(1500)
+```
+
+### Transient bars
+
+`transient=True` removes the bar after completion and suppresses its final line
+when output is redirected:
+
+```python
+with Bar(100, transient=True) as bar:
+    run_task(bar)
+```
+
 ### Smooth rendering
 
 Sub-character rendering makes bars look much more fluid. It's auto-enabled when the fill character is `█`, and you can toggle it explicitly:
@@ -258,7 +326,7 @@ python myscript.py 2>&1 | tee    # no garbled output
 
 | Param        | Type   | Default     | Description                         |
 |--------------|--------|-------------|-------------------------------------|
-| `total`      | int    | required    | Number of steps                     |
+| `total`      | int or None | required | Number of steps; None = unknown   |
 | `width`      | int    | `40`        | Bar width in characters             |
 | `theme`      | str    | `"default"` | Theme name                          |
 | `label`      | str    | `""`        | Text before the bar                 |
@@ -268,8 +336,14 @@ python myscript.py 2>&1 | tee    # no garbled output
 | `show_eta`   | bool   | `True`      | Show estimated time remaining       |
 | `show_speed` | bool   | `False`     | Show items/sec                      |
 | `smooth`     | bool   | `None`      | Sub-character rendering. None = auto |
+| `unit`       | str    | `None`      | Unit displayed with counts and speed |
+| `unit_scale` | bool   | `False`     | Scale B as KiB/MiB and other units as k/M |
+| `transient`  | bool   | `False`     | Remove completed output            |
 
-Methods: `.update(step=1)`, `.set(value)`, context manager. Negative steps are rejected. Calling `.set()` below the total reopens a completed bar and restarts its timer.
+Methods: `.update(step=1)`, `.set(value)`, `.set_total(total)`,
+`.set_label(label)`, `.set_postfix(**fields)`, and the context manager. Negative
+steps are rejected. Calling `.set()` below the total or increasing the total
+reopens a completed bar and restarts its timer.
 
 #### `track(iterable, **options)`
 

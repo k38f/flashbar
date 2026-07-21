@@ -283,7 +283,7 @@ class TestBar:
 
         assert " 2.0s" in buf.getvalue().splitlines()[-1]
 
-    def test_repeated_set_total_is_a_noop(self):
+    def test_repeated_set_at_total_is_a_noop(self):
         buf = io.StringIO()
         bar = Bar(2, file=buf)
         bar.set(2)
@@ -353,6 +353,286 @@ class TestBar:
         assert "inf it/s" in output
         assert not bar._finished
 
+    def test_custom_unit_shows_count_and_rate(self):
+        buf = io.StringIO()
+        with patch("flashbar.bar.time.monotonic") as clock:
+            clock.return_value = 0.0
+            bar = Bar(
+                2048, file=buf, unit="B", unit_scale=True, show_speed=True
+            )
+            clock.return_value = 2.0
+            bar.update(2048)
+
+        output = buf.getvalue()
+        assert "2.0 KiB / 2.0 KiB" in output
+        assert "1.0 KiB/s" in output
+
+    def test_non_byte_units_use_decimal_scaling(self):
+        buf = io.StringIO()
+        Bar(2000, file=buf, unit="row", unit_scale=True).update(2000)
+        assert "2.0 krow / 2.0 krow" in buf.getvalue()
+
+    def test_decimal_scale_carries_after_rounding(self):
+        buf = io.StringIO()
+        Bar(999_999, file=buf, unit="row", unit_scale=True).update(999_999)
+        assert "1.0 Mrow / 1.0 Mrow" in buf.getvalue()
+
+    @pytest.mark.parametrize(
+        ("total", "expected"),
+        [
+            (1023, "1023 B / 1023 B"),
+            (1024, "1.0 KiB / 1.0 KiB"),
+            (1024 ** 2, "1.0 MiB / 1.0 MiB"),
+        ],
+    )
+    def test_byte_scale_boundaries(self, total, expected):
+        buf = io.StringIO()
+        Bar(total, file=buf, unit="B", unit_scale=True).update(total)
+        assert expected in buf.getvalue()
+
+    def test_byte_scale_carries_after_rounding(self):
+        buf = io.StringIO()
+        almost_mib = 1024 ** 2 - 1
+        Bar(almost_mib, file=buf, unit="B", unit_scale=True).update(almost_mib)
+        assert "1.0 MiB / 1.0 MiB" in buf.getvalue()
+
+    def test_unscaled_unit_keeps_integer_counts(self):
+        buf = io.StringIO()
+        Bar(2, file=buf, unit="files").update(2)
+        assert "2 / 2 files" in buf.getvalue()
+
+    def test_default_unit_preserves_legacy_output(self):
+        buf = io.StringIO()
+        Bar(2, file=buf).update(2)
+        assert "2 / 2" not in buf.getvalue()
+
+    @pytest.mark.parametrize("unit", [1, True, object()])
+    def test_unit_must_be_a_string(self, unit):
+        with pytest.raises(TypeError, match="unit must be a string"):
+            Bar(2, unit=unit)
+
+    @pytest.mark.parametrize("value", [1, 0, "yes", None])
+    def test_unit_scale_must_be_boolean(self, value):
+        with pytest.raises(TypeError, match="unit_scale must be a boolean"):
+            Bar(2, unit_scale=value)
+
+    def test_scaled_huge_value_does_not_overflow(self):
+        buf = io.StringIO()
+        huge = 10 ** 10000
+        bar = Bar(huge, width=2, file=buf, unit="B", unit_scale=True)
+        bar.update(huge)
+        assert bar._finished
+        assert "100%" in buf.getvalue()
+
+    def test_unscaled_huge_value_does_not_overflow(self):
+        buf = io.StringIO()
+        huge = 10 ** 10000
+        bar = Bar(huge, width=2, file=buf, unit="items")
+        bar.update(huge)
+        assert bar._finished
+        assert "1.0e+10000 / 1.0e+10000 items" in buf.getvalue()
+
+    def test_set_label_and_postfix_redraw_immediately(self):
+        buf = TTYBuffer()
+        bar = Bar(3, width=3, file=buf)
+        bar.set_label("phase\n2")
+        first = len(buf.getvalue())
+        bar.set_postfix(files=1, errors=0)
+
+        assert "phase 2" in buf.getvalue()
+        assert "files=1 errors=0" in buf.getvalue()[first:]
+
+    def test_set_postfix_replaces_and_empty_call_clears(self):
+        buf = TTYBuffer()
+        bar = Bar(3, width=3, file=buf)
+        bar.set_postfix(first=1)
+        before_replace = len(buf.getvalue())
+        bar.set_postfix(second=2)
+        replaced = buf.getvalue()[before_replace:]
+        assert "first=1" not in replaced
+        assert "second=2" in replaced
+
+        before_clear = len(buf.getvalue())
+        bar.set_postfix()
+        assert "second=2" not in buf.getvalue()[before_clear:]
+
+    def test_postfix_closes_ansi_between_fields(self):
+        buf = TTYBuffer()
+        bar = Bar(2, width=2, file=buf)
+        bar.set_postfix(a="\033[31mred", b="plain")
+        assert "a=\033[31mred\033[0m b=plain" in buf.getvalue()
+
+    def test_postfix_closes_hyperlink_between_fields(self):
+        buf = TTYBuffer()
+        bar = Bar(2, width=2, file=buf)
+        bar.set_postfix(a="\033]8;;https://example.com\033\\link", b="plain")
+        close = "\033]8;;\033\\"
+        assert f"link{close} b=plain" in buf.getvalue()
+
+    def test_dynamic_fields_do_not_redraw_finished_bar(self):
+        buf = io.StringIO()
+        bar = Bar(1, file=buf)
+        bar.update()
+        output = buf.getvalue()
+        bar.set_label("later")
+        bar.set_postfix(done=True)
+        assert buf.getvalue() == output
+
+    def test_postfix_is_rendered_after_statistics(self):
+        buf = io.StringIO()
+        bar = Bar(1, file=buf)
+        bar.set_postfix(files=1)
+        bar.update()
+        assert buf.getvalue().rstrip().endswith("files=1")
+
+    def test_non_tty_strips_ansi_from_dynamic_text(self):
+        buf = io.StringIO()
+        bar = Bar(1, label="\033[31mred\033[0m", file=buf, unit="\033[32mB")
+        bar.set_postfix(state="\033[33mok\033[0m")
+        bar.update()
+        assert "\033[" not in buf.getvalue()
+        assert "red" in buf.getvalue()
+        assert "state=ok" in buf.getvalue()
+
+    def test_transient_erases_completed_tty_line(self):
+        buf = TTYBuffer()
+        Bar(1, width=2, file=buf, transient=True).update()
+        assert buf.getvalue().endswith("\r\033[2K")
+        assert not buf.getvalue().endswith("\n")
+
+    def test_transient_suppresses_non_tty_summary(self):
+        buf = io.StringIO()
+        Bar(1, file=buf, transient=True).update()
+        assert buf.getvalue() == ""
+
+    @pytest.mark.parametrize("value", [1, 0, "yes", None])
+    def test_transient_must_be_boolean(self, value):
+        with pytest.raises(TypeError, match="transient must be a boolean"):
+            Bar(1, transient=value)
+
+    def test_transient_context_preserves_user_exception(self):
+        buf = TTYBuffer()
+        with pytest.raises(RuntimeError, match="task failed"):
+            with Bar(2, file=buf, transient=True):
+                raise RuntimeError("task failed")
+        assert buf.getvalue().endswith("\r\033[2K")
+
+    def test_indeterminate_bar_updates_without_percent_or_eta(self):
+        buf = TTYBuffer()
+        bar = Bar(None, width=5, file=buf, show_eta=True)
+        bar.set(1)
+        bar.set(2)
+
+        output = buf.getvalue()
+        assert "░███░" in output
+        assert "░░███" in output
+        assert "%" not in output
+        assert "ETA" not in output
+        assert "2 it" in output
+        assert bar.current == 2
+        assert not bar._finished
+
+    def test_indeterminate_set_clamps_negative_value(self):
+        bar = Bar(None, file=io.StringIO())
+        bar.set(-10)
+        assert bar.current == 0
+        assert not bar._finished
+
+    def test_set_total_switches_to_determinate_mode(self):
+        buf = TTYBuffer()
+        bar = Bar(None, width=5, file=buf)
+        bar.set(3)
+        before = len(buf.getvalue())
+        bar.set_total(10)
+
+        assert bar.total == 10
+        assert bar.current == 3
+        assert not bar._finished
+        assert " 30%" in buf.getvalue()[before:]
+
+    def test_set_total_clamps_and_completes(self):
+        buf = io.StringIO()
+        bar = Bar(None, width=2, file=buf)
+        bar.update(5)
+        bar.set_total(3)
+        assert bar.current == 3
+        assert bar._finished
+        assert "100%" in buf.getvalue()
+
+    @pytest.mark.parametrize("total", [None, True, 1.5, "2"])
+    def test_set_total_requires_an_integer(self, total):
+        with pytest.raises(TypeError, match="total must be an integer"):
+            Bar(None).set_total(total)
+
+    @pytest.mark.parametrize("total", [0, -1])
+    def test_set_total_must_be_positive(self, total):
+        with pytest.raises(ValueError, match="total must be > 0"):
+            Bar(None).set_total(total)
+
+    def test_larger_total_reopens_finished_bar(self):
+        buf = io.StringIO()
+        bar = Bar(2, file=buf)
+        bar.update(2)
+        bar.set_total(4)
+        assert bar.current == 2
+        assert bar.total == 4
+        assert not bar._finished
+
+    def test_reopened_total_restarts_timer(self):
+        buf = io.StringIO()
+        with patch("flashbar.bar.time.monotonic") as clock:
+            clock.return_value = 1.0
+            bar = Bar(2, file=buf)
+            clock.return_value = 3.0
+            bar.update(2)
+            clock.return_value = 10.0
+            bar.set_total(4)
+            clock.return_value = 12.0
+            bar.update(2)
+
+        assert " 2.0s" in buf.getvalue().splitlines()[-1]
+
+    def test_smaller_total_finishes_active_bar(self):
+        buf = io.StringIO()
+        bar = Bar(10, file=buf)
+        bar.set(6)
+        bar.set_total(5)
+        assert bar.total == 5
+        assert bar.current == 5
+        assert bar._finished
+        assert "100%" in buf.getvalue()
+
+    def test_smaller_total_redraws_finished_output(self):
+        buf = io.StringIO()
+        bar = Bar(4, file=buf, unit="items")
+        bar.update(4)
+        bar.set_total(2)
+        assert bar.total == 2
+        assert bar.current == 2
+        assert bar._finished
+        assert len(buf.getvalue().splitlines()) == 2
+        assert "2 / 2 items" in buf.getvalue().splitlines()[-1]
+
+    def test_same_total_is_a_noop(self):
+        buf = TTYBuffer()
+        bar = Bar(3, file=buf)
+        bar.update()
+        output = buf.getvalue()
+        bar.set_total(3)
+        assert buf.getvalue() == output
+
+    def test_indeterminate_context_prints_clean_summary(self):
+        buf = io.StringIO()
+        with Bar(None, width=2, file=buf) as bar:
+            bar.update(3)
+
+        output = buf.getvalue()
+        assert bar._finished
+        assert "3 it" in output
+        assert "%" not in output
+        assert "ETA" not in output
+        assert "s" in output
+
 
 # -- track() tests -----------------------------------------------------
 
@@ -367,6 +647,25 @@ class TestTrack:
 
     def test_with_theme(self):
         list(track(range(5), theme="retro"))
+
+    def test_unit_options_are_forwarded(self):
+        buf = io.StringIO()
+        list(track(range(1024), file=buf, unit="B", unit_scale=True))
+        assert "1.0 KiB / 1.0 KiB" in buf.getvalue()
+
+    def test_transient_track_erases_completed_tty_line(self):
+        buf = TTYBuffer()
+        list(track(range(2), width=2, file=buf, transient=True))
+        assert buf.getvalue().endswith("\r\033[2K")
+
+    def test_transient_track_erases_line_when_closed_early(self):
+        buf = TTYBuffer()
+        iterator = track(range(4), width=2, file=buf, transient=True)
+        assert next(iterator) == 0
+        assert next(iterator) == 1
+        iterator.close()
+        assert buf.getvalue().endswith("\r\033[2K")
+        assert "100%" not in buf.getvalue()
 
     def test_generator_with_total(self):
         def gen():
