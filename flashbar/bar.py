@@ -53,6 +53,7 @@ _MIN_REDRAW_INTERVAL = 1.0 / 30.0  # cap redraws at ~30 fps
 _TAB_SIZE = 8
 _DECIMAL_PREFIXES = ("", "k", "M", "G", "T", "P", "E", "Z", "Y")
 _BINARY_PREFIXES = ("", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi")
+_MAX_PLAIN_INTEGER_DIGITS = 4300
 
 
 T = TypeVar("T")
@@ -294,16 +295,20 @@ def _format_postfix(values: Mapping[str, object]) -> str:
 
 
 def _format_integer(value: int) -> str:
-    try:
-        return str(value)
-    except ValueError:
-        if value == 0:
-            return "0"
-        logarithm = math.log10(abs(value))
-        exponent = int(math.floor(logarithm))
-        mantissa = 10 ** (logarithm - exponent)
-        sign = "-" if value < 0 else ""
-        return f"{sign}{mantissa:.1f}e+{exponent}"
+    if value == 0:
+        return "0"
+
+    logarithm = math.log10(abs(value))
+    if logarithm < _MAX_PLAIN_INTEGER_DIGITS:
+        try:
+            return str(value)
+        except ValueError:
+            pass
+
+    exponent = int(math.floor(logarithm))
+    mantissa = 10 ** (logarithm - exponent)
+    sign = "-" if value < 0 else ""
+    return f"{sign}{mantissa:.1f}e+{exponent}"
 
 
 def _format_measure(value: Union[int, float], unit: str, scale: bool) -> str:
